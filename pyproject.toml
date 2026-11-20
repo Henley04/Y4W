@@ -38,6 +38,12 @@ y4w = "y4w.cli:main"
 where = ["."]
 include = ["y4w*"]
 
+# Ship native source / docs inside the wheel so downstream users can build the
+# optional CUDA extension and read Windows build instructions offline.
+[tool.setuptools.package-data]
+"y4w.kernels" = ["*.cu", "*.md"]
+"y4w.tests" = ["fixtures/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["y4w/tests"]
 python_files = ["test_*.py"]
