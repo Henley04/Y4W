@@ -56,6 +56,28 @@ jobs:
           python -m y4w generate --backend cpu --prompt "ci" --max-new-tokens 3 --seed 7
           python -m y4w --list-backends
 
+  # One-command service smoke: REST API + Gradio WebUI on Windows, no GPU.
+  # TestClient exercises the full ASGI app (including the mounted WebUI) in-process.
+  service:
+    name: service smoke (windows, webui + api)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - name: Install CPU-only PyTorch
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+      - name: Install service extras
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e .[test,serve]
+      - name: Service tests
+        run: python -m pytest y4w/tests/test_server.py -v --tb=short
+      - name: Serve CLI help
+        run: python -m y4w serve --help
+
   # Verify the Windows packaging metadata / native build config is coherent.
   # We do not compile CUDA here (no nvcc/GPU on hosted runners); we validate that
   # the CUDA C++ source and MSVC build script are present and syntactically

@@ -88,3 +88,29 @@ def test_probe_never_raises_even_if_class_broken(monkeypatch):
     info = registry._safe_probe(Broken)
     assert info.available is False
     assert "boom" in info.reason
+
+
+def test_priority_presets_are_configurable():
+    import os
+    from y4w.backends.registry import (
+        ENV_PRIORITY, get_backend_order, set_backend_priority,
+    )
+    assert [c.name for c in get_backend_order("cuda")] == [
+        "cuda", "tensorrt_rtx", "vulkan", "cpu"]
+    assert [c.name for c in get_backend_order("tensorrt")] == [
+        "tensorrt_rtx", "cuda", "vulkan", "cpu"]
+    # Unknown policies must fall back to the default, never raise.
+    assert get_backend_order("typo") == BACKEND_ORDER
+
+    old = os.environ.get(ENV_PRIORITY)
+    try:
+        set_backend_priority("tensorrt")
+        assert [c.name for c in get_backend_order()] == [
+            "tensorrt_rtx", "cuda", "vulkan", "cpu"]
+        # The CPU reference path remains the last resort under either policy.
+        assert available_backends()[-1] == "cpu"
+    finally:
+        if old is None:
+            os.environ.pop(ENV_PRIORITY, None)
+        else:
+            os.environ[ENV_PRIORITY] = old

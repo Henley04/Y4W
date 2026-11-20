@@ -6,7 +6,10 @@ import json
 import sys
 
 from . import __version__
-from .backends.registry import available_backends, detect_backends
+from .backends.registry import (
+    available_backends, backend_priority, detect_backends, get_backend_order,
+    set_backend_priority,
+)
 from .kernels import kernel_status
 from .runtime.config import EngineConfig
 from .runtime.engine import Engine
@@ -44,6 +47,22 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--kv-cache-dtype", choices=["bf16", "int8"], default="bf16")
     gen.add_argument("--cfg-scale", type=_guidance, default=None)
     gen.add_argument("--output", help="Write JSON result to this file")
+
+    srv = sub.add_parser(
+        "serve",
+        help="One-command inference service: Gradio WebUI + REST API on one port",
+    )
+    srv.add_argument("--host", default="127.0.0.1", help="Bind address (default 127.0.0.1)")
+    srv.add_argument("--port", type=int, default=8000, help="Bind port (default 8000)")
+    srv.add_argument("--model-dir", help="Directory with orbitquant_manifest.json + packed weights")
+    srv.add_argument("--backend", default="auto",
+                     choices=["auto", "cuda", "tensorrt_rtx", "vulkan", "cpu"])
+    srv.add_argument("--profile", default="fast",
+                     choices=["reference", "fused", "fast", "memory"])
+    srv.add_argument("--backend-priority", choices=["cuda", "tensorrt"], default=None,
+                     help="auto-mode priority: cuda-first (default) or tensorrt-first")
+    srv.add_argument("--no-webui", action="store_true",
+                     help="Run the REST API only (skip the Gradio WebUI)")
     return parser
 
 
@@ -52,6 +71,8 @@ def cmd_info() -> dict:
     return {
         "y4w_version": __version__,
         "python": sys.version.split()[0],
+        "backend_priority_policy": backend_priority(),
+        "backend_priority_order": [c.name for c in get_backend_order()],
         "available_backends": available_backends(),
         "backends": {name: {
             "available": i.available,
@@ -102,6 +123,19 @@ def main(argv: list[str] | None = None) -> int:
             with open(args.output, "w", encoding="utf-8") as fh:
                 fh.write(payload + "\n")
         print(payload)
+        return 0
+
+    if args.command == "serve":
+        if args.backend_priority:
+            set_backend_priority(args.backend_priority)
+        from .server import run_server
+        cfg = EngineConfig(
+            model_dir=args.model_dir,
+            backend=args.backend,
+            profile=args.profile,
+        )
+        run_server(host=args.host, port=args.port, config=cfg,
+                   mount_webui=not args.no_webui)
         return 0
 
     parser.print_help()

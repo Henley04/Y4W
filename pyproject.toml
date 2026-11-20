@@ -27,9 +27,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+test = ["pytest>=7.0", "httpx>=0.24", "fastapi>=0.100"]
 hub = ["huggingface-hub>=0.20", "soundfile>=0.12"]
-all = ["pytest>=7.0", "huggingface-hub>=0.20", "soundfile>=0.12"]
+# One-command service: REST API (fastapi/uvicorn) + Gradio WebUI.
+# The API works even if gradio is omitted; the WebUI is optional on top.
+serve = ["fastapi>=0.100", "uvicorn>=0.20", "httpx>=0.24", "gradio>=4.0"]
+all = ["pytest>=7.0", "httpx>=0.24", "huggingface-hub>=0.20",
+       "soundfile>=0.12", "fastapi>=0.100", "uvicorn>=0.20", "gradio>=4.0"]
 
 [project.scripts]
 y4w = "y4w.cli:main"
