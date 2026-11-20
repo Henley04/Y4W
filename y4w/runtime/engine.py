@@ -146,6 +146,20 @@ class Engine:
         self.model.eval()
         self._maybe_compile()
 
+    @staticmethod
+    def _cxx_compiler_available() -> bool:
+        """Inductor needs a C++ compiler (cl.exe on Windows, g++/clang elsewhere).
+
+        torch.compile() itself is lazy -- the compiler is only invoked on the
+        first forward -- so we must detect this up front to avoid a hard failure
+        on hosts (like GitHub Windows runners) that ship no C++ toolchain.
+        """
+        import shutil
+        import sys
+        if sys.platform == "win32":
+            return shutil.which("cl") is not None
+        return any(shutil.which(c) for c in ("g++", "clang++", "cc", "gcc"))
+
     def _maybe_compile(self) -> None:
         """Wrap forward in torch.compile(mode='reduce-overhead') when possible."""
         if not (self.config.optimize and self.config.compile_model):
@@ -154,11 +168,29 @@ class Engine:
             return  # memory profile stays eager to avoid compile overhead memory
         if not hasattr(torch, "compile"):
             return
+        if not self._cxx_compiler_available():
+            log.info("No C++ compiler found; torch.compile disabled (eager path)")
+            return
         try:
             self._compiled = torch.compile(self.model, mode="reduce-overhead", dynamic=True)
         except Exception as exc:  # pragma: no cover - compiler absent / incompatible
             log.warning("torch.compile unavailable, using eager path: %s", exc)
             self._compiled = None
+
+    def _forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        """Run a forward pass, falling back to eager if the compiled path fails.
+
+        Compilation is lazy: even when torch.compile() succeeded, the first
+        actual forward can raise (e.g. Inductor backend error). Catch that once,
+        disable compilation and retry eagerly so inference never breaks.
+        """
+        if self._compiled is not None:
+            try:
+                return self._compiled(tokens)
+            except Exception as exc:
+                log.warning("compiled forward failed, disabling torch.compile: %s", exc)
+                self._compiled = None
+        return self.model(tokens)
 
     @torch.no_grad()
     def generate(self, prompt: str | list[int] | None = None, *,
@@ -170,11 +202,9 @@ class Engine:
             seed = self.config.seed if self.config.seed is not None else 0
         torch.manual_seed(seed)
         tokens = _encode_prompt(prompt)
-        device = self._target_device()
-        model_fn = self._compiled if self._compiled is not None else self.model
         t0 = time.perf_counter()
         for _ in range(max(1, int(max_new_tokens))):
-            logits = model_fn(tokens)
+            logits = self._forward(tokens)
             next_logits = logits[-1] / max(temperature, 1e-5)
             probs = torch.softmax(next_logits, dim=-1)
             nxt = torch.multinomial(probs, 1)

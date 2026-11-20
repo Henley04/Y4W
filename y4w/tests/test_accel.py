@@ -138,3 +138,27 @@ def test_no_optimize_disables_all():
     acc = e.acceleration_status()
     assert acc["torch_compile"] is False
     assert acc["sdpa"] is False
+
+
+def test_compile_disabled_without_cxx_compiler(monkeypatch):
+    # Simulate a host (e.g. Windows CI runner) with no C++ compiler.
+    monkeypatch.setattr(Engine, "_cxx_compiler_available", staticmethod(lambda: False))
+    e = Engine(EngineConfig(backend="cpu", seed=1))
+    assert e.acceleration_status()["torch_compile"] is False
+    # Inference still works through the eager path.
+    r = e.generate("hi", max_new_tokens=2)
+    assert r["token_count"] == 3
+
+
+def test_compiled_forward_runtime_fallback(monkeypatch):
+    # Even if torch.compile() succeeded, a lazy first-forward error must fall
+    # back to eager instead of propagating (Inductor missing cl.exe on Windows).
+    e = Engine(EngineConfig(backend="cpu", seed=1))
+
+    def boom(_):
+        raise RuntimeError("simulated inductor error")
+
+    e._compiled = boom  # force a failing "compiled" callable regardless of host
+    r = e.generate("hi", max_new_tokens=2)
+    assert r["token_count"] == 3
+    assert e._compiled is None  # disabled after the failure
