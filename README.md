@@ -118,9 +118,12 @@ YuE2 的符号规划输出的是**双声部 ABC 乐谱**（`V: Vocal` 歌声带�
 note on/off。三种入口任选：
 
 ```bash
-# CLI：从 .abc 文件或内联文本转换
+# CLI：推荐用 .abc 文件
 y4w abc2midi --abc-file score.abc --out-dir ./out
-y4w abc2midi --abc "X:1\nK:C\nV: Vocal C2E2|\nV: Ins C,2G,2|\n" --out-dir ./out
+
+# 也可以内联；bash 需用 $'...' 才会把 \n 解释成换行
+y4w abc2midi --abc $'X:1\nK:C\nV: Vocal C2E2|\nV: Ins C,2G,2|\n' --out-dir ./out
+# Windows PowerShell 建议直接用 --abc-file，避免引号转义问题
 
 # WebUI：y4w serve 后切到 "ABC → MIDI" Tab，粘贴 ABC，点“转换为 MIDI”下载两个文件
 
@@ -139,6 +142,7 @@ abc_to_midi_files(abc_text, "./out")     # 直接写出两个 .mid 文件
 
 > 说明：转换器只解析音符时值与音高，引号内的和弦标记（如 `"C"`、`"Am7"`）
 > 作为伴奏提示被忽略，不写入音符轨；多首曲子只转换第一首（`X:1`）。
+> 解析不出任何声部/音符时，REST 返回 `422`、CLI 以非零码退出，不会静默产出空 MIDI。
 
 ## 3. Python API
 

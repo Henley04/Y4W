@@ -49,7 +49,11 @@ if _HAS_FASTAPI:
         elapsed_seconds: float
 
     class Abc2MidiRequest(BaseModel):
-        abc: str = Field(..., description="YuE2 two-voice ABC score text")
+        abc: str = Field(
+            ...,
+            max_length=200_000,
+            description="YuE2 two-voice ABC score text",
+        )
 else:  # pragma: no cover
     class GenerateRequest:  # type: ignore
         pass
@@ -150,16 +154,29 @@ def create_app(config: EngineConfig | None = None, *,
     def abc2midi(req: Abc2MidiRequest) -> dict[str, Any]:
         """Convert a YuE2 ABC score into two base64-encoded MIDI files."""
         from ..abc2midi import abc_to_midi
+        from fastapi import HTTPException
+
         if not req.abc or not req.abc.strip():
-            from fastapi import HTTPException
             raise HTTPException(status_code=400, detail="abc must not be empty")
         try:
             result = abc_to_midi(req.abc)
         except Exception as exc:  # malformed ABC -> surface a clear error
-            from fastapi import HTTPException
             raise HTTPException(
                 status_code=422,
                 detail=f"ABC conversion failed: {type(exc).__name__}: {exc}",
+            )
+        if not result.voices or (
+            result.vocal_note_count + result.accompaniment_note_count
+        ) == 0:
+            # Parsed "successfully" but produced nothing audible - report it
+            # instead of handing back two empty MIDI files.
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "ABC 未解析出任何声部或音符",
+                    "voices": result.voices,
+                    "warnings": result.warnings,
+                },
             )
         payload = result.to_dict(base64=True)
         # Return base64 fields only (drop the raw byte-list fields).

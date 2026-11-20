@@ -25,6 +25,16 @@ and on CI runners, and writes **one standard MIDI file per voice**:
 The writer produces a compliant SMF (format 1, one track) with tempo, time
 signature, key signature, program change and note on/off events.
 
+Supported ABC subset: notes (``C``-``B`` / ``c``-``b``), octave marks
+(``,`` / ``'``), accidentals (``^ _ =`` and doubled forms), durations
+(``C2``, ``C/2``, ``C3/2``, ``C//``), dotted notes (``C2.``), ties (``-``,
+including across line breaks and bar lines), rests (``z`` and ``Z``
+whole-measure rests), broken rhythm (``<`` / ``>`` and doubled forms),
+chords (``[CEG]``), tuplets (``(3``), bar lines, quoted chord symbols
+(ignored), ``%`` comments, ``M:``/``L:``/``Q:``/``K:`` fields (including
+mid-tune changes), multi-voice ``V:`` declarations, and multiple tunes
+(first tune only).
+
 Public API
 ----------
 ``parse_abc(text)``
@@ -37,8 +47,10 @@ Public API
 """
 from __future__ import annotations
 
+import base64 as _base64
 import math
 import os
+import re
 import struct
 from dataclasses import dataclass, field
 
@@ -84,10 +96,6 @@ class ParsedScore:
     voice_order: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
-    @property
-    def unit_ticks(self, ppq: int = 480) -> float:  # pragma: no cover - helper
-        return 4.0 * ppq * self.unit_num / self.unit_den
-
     def total_ticks(self, ppq: int = 480) -> int:
         last = 0
         for notes in self.voices.values():
@@ -117,11 +125,14 @@ class AbcConversionResult:
     warnings: list[str]
 
     def to_dict(self, *, base64: bool = False) -> dict:
-        """Serialize to a JSON-friendly dict (optionally base64 MIDI bytes)."""
-        import base64
+        """Serialize to a JSON-friendly dict.
+
+        With ``base64=True`` the MIDI bytes are base64 strings; otherwise they
+        are plain ``list[int]`` byte arrays.
+        """
 
         def _enc(data: bytes):
-            return base64.b64encode(data).decode("ascii") if base64 else list(data)
+            return _base64.b64encode(data).decode("ascii") if base64 else list(data)
 
         return {
             "voices": self.voices,
@@ -135,8 +146,8 @@ class AbcConversionResult:
             "warnings": self.warnings,
             "vocal_midi": _enc(self.vocal_midi),
             "accompaniment_midi": _enc(self.accompaniment_midi),
-            "vocal_midi_b64": base64.b64encode(self.vocal_midi).decode("ascii"),
-            "accompaniment_midi_b64": base64.b64encode(
+            "vocal_midi_b64": _base64.b64encode(self.vocal_midi).decode("ascii"),
+            "accompaniment_midi_b64": _base64.b64encode(
                 self.accompaniment_midi
             ).decode("ascii"),
         }
@@ -159,31 +170,37 @@ _PITCH_CLASS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 
 
 def _key_fifths(key: str) -> tuple[int, bool]:
-    """Return (fifths, is_minor) for an ABC key string such as ``Cm``/``F#m``."""
-    k = key.strip()
+    """Return (fifths, is_minor) for an ABC key field value.
+
+    Only the leading key token is considered, so decorated fields such as
+    ``Am clef=treble`` are handled correctly.
+    """
+    k = key.strip().strip('"')
     if not k:
         return 0, False
-    is_minor = False
-    lower = k.lower()
-    if lower.endswith("min") or lower.endswith("m") or "minor" in lower:
-        is_minor = True
-    # Extract root letter + optional accidental.
+    token = k.split()[0]  # drop trailing parameters (clef=..., etc.)
+    low = token.lower()
+    is_minor = low.endswith("min") or (low.endswith("m") and not low.endswith("dim"))
+
     root = ""
-    for ch in k:
+    root_idx = -1
+    for idx, ch in enumerate(token):
         if ch.isalpha() and ch.upper() in _PITCH_CLASS:
             root = ch.upper()
+            root_idx = idx
             break
-    rest = k[k.index(root) + 1:] if root else ""
+    if not root:
+        return 0, False
+
+    # Accidental immediately after the root letter.
     acc = ""
-    for ch in rest:
+    for ch in token[root_idx + 1:]:
         if ch in "#b":
             acc += ch
-            if acc == "bb":
-                break
         elif ch.isalpha():
             break
-    # Normalise "b" flats into the Bb/Eb/.. spelling used by the map.
-    root_acc = root + ("b" if acc == "b" or acc == "bb" else "#" if acc == "#" else "")
+    root_acc = root + ("b" if acc.startswith("b") else "#" if acc.startswith("#") else "")
+
     table = _MINOR_FIFTHS if is_minor else _MAJOR_FIFTHS
     if root_acc in table:
         return table[root_acc], is_minor
@@ -204,8 +221,68 @@ def _key_accidentals(fifths: int) -> dict[str, int]:
 
 
 # --------------------------------------------------------------------------- #
+# Header field helpers
+# --------------------------------------------------------------------------- #
+_ATTR_RE = re.compile(r'[A-Za-z_]+\s*=\s*(?:"[^"]*"|\S+)')
+_MUSIC_RE = re.compile(r'[A-Ga-gzZ\[\]()]|[\^_=]')
+
+
+def _parse_meter(value: str) -> tuple[int, int] | None:
+    v = value.strip().strip('"').split()[0] if value.strip() else ""
+    if v == "C":
+        return (4, 4)
+    if v in ("C|", "C|:"):
+        return (2, 2)
+    if "/" in v:
+        a, b = v.split("/", 1)
+        try:
+            n, d = int(a), int(b)
+            if n > 0 and d > 0:
+                return (n, d)
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_unit(value: str) -> tuple[int, int] | None:
+    v = value.strip().strip('"').split()[0] if value.strip() else ""
+    if "/" in v:
+        a, b = v.split("/", 1)
+        try:
+            n, d = int(a), int(b)
+            if n > 0 and d > 0:
+                return (n, d)
+        except ValueError:
+            return None
+    return None
+
+
+def _parse_tempo(value: str) -> float | None:
+    v = value.strip().strip('"').split()[0] if value.strip() else ""
+    if not v:
+        return None
+    try:
+        bpm = float(v.split("=")[-1].strip())
+    except ValueError:
+        return None
+    return bpm if 0 < bpm < 1000 else None
+
+
+# --------------------------------------------------------------------------- #
 # ABC body scanner
 # --------------------------------------------------------------------------- #
+@dataclass
+class _VoiceState:
+    """Mutable per-voice parser state that must survive line breaks."""
+
+    cursor: int = 0
+    tie_pending: bool = False
+    acc_state: dict[tuple[str, int], int] = field(default_factory=dict)
+    tuplet_factor: float = 1.0
+    tuplet_left: int = 0
+    broken_next: float = 1.0
+
+
 def _strip_comment(line: str) -> str:
     """Strip ABC ``%`` comments (but not a percent inside a quoted chord)."""
     out: list[str] = []
@@ -220,10 +297,11 @@ def _strip_comment(line: str) -> str:
 
 
 def _parse_duration(s: str, i: int) -> tuple[float, int]:
-    """Parse a note duration starting at ``i``.
+    """Parse a duration in L units starting at ``i``.
 
-    Returns (duration_in_L_units, new_index).  ``E2`` -> 2 units,
-    ``E`` -> 1, ``E/2`` -> 0.5, ``E3/2`` -> 1.5, ``E//`` -> 0.25.
+    Handles ``E2`` (2 units), ``E`` (1), ``E/2`` (0.5), ``E3/2`` (1.5),
+    ``E//`` (0.25) and dotted forms (``E2.`` -> 3 units; each extra dot adds
+    half of the previous increment).
     """
     start = i
     numerator = ""
@@ -231,6 +309,7 @@ def _parse_duration(s: str, i: int) -> tuple[float, int]:
         numerator += s[i]
         i += 1
     n = int(numerator) if numerator else 1
+    base = float(n)
     if i < len(s) and s[i] == "/":
         i += 1
         denom = ""
@@ -238,31 +317,46 @@ def _parse_duration(s: str, i: int) -> tuple[float, int]:
             denom += s[i]
             i += 1
         if denom:
-            return n / int(denom), i
-        # Each additional slash halves again: E/ = 1/2, E// = 1/4.
-        d = 2
-        while i < len(s) and s[i] == "/":
-            d *= 2
-            i += 1
-        return n / d, i
-    if i == start:  # no digits / slash consumed -> implicit single unit
-        return 1.0, i
-    return float(n), i
+            base = n / int(denom)
+        else:
+            d = 2
+            while i < len(s) and s[i] == "/":
+                d *= 2
+                i += 1
+            base = n / d
+    elif i == start:
+        base = 1.0
+    # Dotted notes: 1.5, 1.75, 1.875, ...
+    dots = 0
+    while i < len(s) and s[i] == ".":
+        dots += 1
+        i += 1
+    if dots:
+        factor = 1.0
+        add = 0.5
+        for _ in range(dots):
+            factor += add
+            add /= 2.0
+        base *= factor
+    return base, i
 
 
 def _parse_music(
     text: str,
     notes: list[MidiNote],
-    cursor: int,
-    unit_ticks: float,
-    key_acc: dict[str, int],
+    st: _VoiceState,
+    ctx: dict,
     warnings: list[str],
-) -> int:
-    """Parse one voice's music string; append notes; return new tick cursor."""
+) -> None:
+    """Parse one voice's music string, appending notes and advancing ``st``."""
     i = 0
-    tie_pending = False
-    broken = 1.0  # broken-rhythm factor from '<' / '>'
     n = len(text)
+    chord_buf: list[tuple[int, int]] | None = None
+
+    def _quantized(raw: float) -> int:
+        factor = st.tuplet_factor * st.broken_next
+        return max(1, int(round(raw * factor)))
+
     while i < n:
         ch = text[i]
         if ch.isspace():
@@ -289,27 +383,88 @@ def _parse_music(
             if i < n:
                 i += 1
             continue
-        if ch in "[|]":  # chord bracket / barline - structural only
+        if ch == "|":  # bar line resets in-measure accidentals
+            st.acc_state.clear()
             i += 1
             continue
-        if ch == "(":  # tuplet opening - skip "(3"
+        if ch == "[":
             i += 1
+            if i < n and text[i].isdigit():  # [1 / [2 ending marker
+                while i < n and text[i].isdigit():
+                    i += 1
+                continue
+            chord_buf = []
+            continue
+        if ch == "]":
+            i += 1
+            if chord_buf is not None:
+                dur_start = i
+                units_after, i = _parse_duration(text, i)
+                if i > dur_start:  # explicit duration written after "]"
+                    dur = _quantized(units_after * ctx["unit_ticks"])
+                    for pitch, _ in chord_buf:
+                        notes.append(
+                            MidiNote(pitch=pitch, start=st.cursor, duration=dur)
+                        )
+                    st.cursor += dur
+                elif chord_buf:
+                    max_dur = max(d for _, d in chord_buf)
+                    for pitch, dur in chord_buf:
+                        notes.append(
+                            MidiNote(pitch=pitch, start=st.cursor, duration=dur)
+                        )
+                    st.cursor += max_dur
+                chord_buf = None
+            continue
+        if ch == "(":  # tuplet: (3 -> 3 notes in the time of 2
+            i += 1
+            digits = ""
             while i < n and text[i].isdigit():
+                digits += text[i]
                 i += 1
+            p = int(digits) if digits else 0
+            q = p - 1 if p > 1 else 1
+            if i < n and text[i] == ":":  # (p:q[:r] form
+                i += 1
+                qd = ""
+                while i < n and text[i].isdigit():
+                    qd += text[i]
+                    i += 1
+                q = int(qd) if qd else q
+                while i < n and text[i] == ":":
+                    i += 1
+                    while i < n and text[i].isdigit():
+                        i += 1
+            if p > 1 and q > 0:
+                st.tuplet_factor = q / p
+                st.tuplet_left = p
             continue
         if ch == ")":
             i += 1
             continue
         if ch in "<>":
-            broken = 1.5 if ch == ">" else 0.5
-            i += 1
+            # Broken rhythm: A>B lengthens A and shortens B.
+            symbol = ch
+            count = 0
+            while i < n and text[i] == symbol:
+                count += 1
+                i += 1
+            long_f = 2.0 - 0.5 ** count
+            short_f = 0.5 ** count
+            prev_f, next_f = (long_f, short_f) if symbol == ">" else (short_f, long_f)
+            if notes and chord_buf is None:
+                old = notes[-1].duration
+                new = max(1, int(round(old * prev_f)))
+                notes[-1].duration = new
+                st.cursor += new - old
+            st.broken_next = next_f
             continue
-        if ch == "-":  # tie: extend the previous note of the same pitch
-            tie_pending = True
+        if ch == "-":  # tie
+            st.tie_pending = True
             i += 1
             continue
 
-        # Explicit accidental (^ #, _ flat, = natural) - may be doubled.
+        # Explicit accidental (^ sharp, _ flat, = natural) - possibly doubled.
         explicit: int | None = None
         if ch in "^_=":
             if ch == "^":
@@ -321,8 +476,7 @@ def _parse_music(
             i += 1
             while i < n and text[i] in "^_=":
                 t = text[i]
-                delta = 1 if t == "^" else -1 if t == "_" else 0
-                explicit = (explicit or 0) + delta
+                explicit = (explicit or 0) + (1 if t == "^" else -1 if t == "_" else 0)
                 i += 1
 
         # Rests.
@@ -330,44 +484,57 @@ def _parse_music(
             r = text[i]
             i += 1
             units, i = _parse_duration(text, i)
-            ticks = int(round(units * unit_ticks * broken))
-            if r == "Z":  # whole-measure rest (YuE2 writes Z4 for full bars)
-                ticks = int(round(units * 4 * unit_ticks))
-            cursor += ticks
-            broken = 1.0
-            tie_pending = False
+            if r == "Z":
+                # Whole-measure rest; a number multiplies measures (Z4 = 4 bars).
+                ticks = max(1, int(round(units * ctx["bar_ticks"])))
+            else:
+                ticks = _quantized(units * ctx["unit_ticks"])
+            st.cursor += ticks
+            st.broken_next = 1.0
+            st.tie_pending = False
             continue
 
         # A note letter.
-        if i < n and text[i].upper() in _PITCH_CLASS and text[i].isalpha():
+        if i < n and text[i].isalpha() and text[i].upper() in _PITCH_CLASS:
             letter = text[i].upper()
             is_lower = text[i].islower()
             i += 1
             octave = 5 if is_lower else 4
             while i < n and text[i] in ",'":
-                if text[i] == ",":
-                    octave -= 1
-                else:
-                    octave += 1
+                octave += 1 if text[i] == "'" else -1  # ' up, , down
                 i += 1
             units, i = _parse_duration(text, i)
-            alter = explicit if explicit is not None else key_acc.get(letter, 0)
+            key_alter = st.acc_state.get(
+                (letter, octave), ctx["key_acc"].get(letter, 0)
+            )
+            alter = explicit if explicit is not None else key_alter
+            if explicit is not None:
+                st.acc_state[(letter, octave)] = explicit
             pitch = _PITCH_CLASS[letter] + 12 * (octave + 1) + alter
             pitch = max(0, min(127, pitch))
-            ticks = max(1, int(round(units * unit_ticks * broken)))
-            if tie_pending and notes and notes[-1].pitch == pitch:
-                notes[-1].duration += ticks
+            dur = _quantized(units * ctx["unit_ticks"])
+
+            if chord_buf is not None:
+                chord_buf.append((pitch, dur))
             else:
-                notes.append(MidiNote(pitch=pitch, start=cursor, duration=ticks))
-            cursor += ticks
-            tie_pending = False
-            broken = 1.0
+                if st.tie_pending and notes and notes[-1].pitch == pitch:
+                    notes[-1].duration += dur
+                else:
+                    notes.append(
+                        MidiNote(pitch=pitch, start=st.cursor, duration=dur)
+                    )
+                st.cursor += dur
+                st.tie_pending = False
+            if st.tuplet_left:
+                st.tuplet_left -= 1
+                if st.tuplet_left == 0:
+                    st.tuplet_factor = 1.0
+            st.broken_next = 1.0
             continue
 
         if explicit is not None:
-            warnings.append(f"未识别的临时记号后字符: {text[i:i+6]!r}")
+            warnings.append(f"未识别的临时记号后字符: {text[i:i + 6]!r}")
         i += 1  # unknown char -> skip
-    return cursor
 
 
 # --------------------------------------------------------------------------- #
@@ -393,119 +560,131 @@ def _split_first_tune(text: str) -> tuple[str, bool]:
     return text, False
 
 
-_HEADER_FIELDS = {"X", "T", "M", "L", "Q", "K", "N", "S", "B", "Z", "P", "U"}
-
-
 def parse_abc(text: str, *, ppq: int = 480) -> ParsedScore:
     """Parse ABC text into a :class:`ParsedScore`.
 
     Only the first tune is used if the text contains several.  Voices are
-    discovered from ``V:`` lines; note positions are accumulated per voice.
+    discovered from ``V:`` lines; note positions are accumulated per voice and
+    survive line breaks (so ties and accidentals work across lines).
     """
     text, more = _split_first_tune(text)
     score = ParsedScore()
     if more:
         score.warnings.append("检测到多首曲子，仅转换第一首 (X:1)")
 
-    # First pass: header fields.
+    # --- pass 1: header fields ---
     for raw in text.splitlines():
         line = _strip_comment(raw).strip()
-        if not line:
-            continue
         if ":" not in line:
             continue
         key, value = line.split(":", 1)
         key = key.strip()
         value = value.strip()
-        if key not in _HEADER_FIELDS and key != "V":
+        if len(key) != 1 or not key.isalpha():
             continue
         if key == "T" and not score.title:
             score.title = value
         elif key == "M":
-            try:
-                num, den = value.split("/", 1)
-                score.meter = (int(num), int(den))
-            except (ValueError, IndexError):
-                score.warnings.append(f"无法解析拍号 M:{value}")
+            m = _parse_meter(value)
+            if m:
+                score.meter = m
+            else:
+                score.warnings.append(f"无法解析拍号 M:{value}，使用 4/4")
         elif key == "L":
-            try:
-                num, den = value.split("/", 1)
-                score.unit_num, score.unit_den = int(num), int(den)
-            except (ValueError, IndexError):
-                score.warnings.append(f"无法解析单位音符 L:{value}")
+            u = _parse_unit(value)
+            if u:
+                score.unit_num, score.unit_den = u
+            else:
+                score.warnings.append(f"无法解析单位音符 L:{value}，使用 1/16")
         elif key == "Q":
-            # Forms: 1/4=88, 88, "1/4=120"
-            try:
-                bpm = float(value.split("=")[-1].strip())
-                if 0 < bpm < 1000:
-                    score.tempo_bpm = bpm
-            except ValueError:
+            bpm = _parse_tempo(value)
+            if bpm:
+                score.tempo_bpm = bpm
+            else:
                 score.warnings.append(f"无法解析速度 Q:{value}")
         elif key == "K":
-            score.key = value
-    fifths, is_minor = _key_fifths(score.key)
+            score.key = value.split()[0] if value.split() else "C"
 
-    # Second pass: voices / music.  Header V: definitions contain clef=/name=;
-    # body V: lines carry actual music.
-    score.voices = {}
-    score.voice_order = []
-    cursor_by_voice: dict[str, int] = {}
+    if score.unit_den <= 0:
+        score.warnings.append("单位音符长度非法，回退到 L:1/16")
+        score.unit_num, score.unit_den = 1, 16
+    if score.meter[0] <= 0 or score.meter[1] <= 0:
+        score.warnings.append("拍号非法，回退到 M:4/4")
+        score.meter = (4, 4)
+
+    # --- pass 2: voices / music ---
+    ctx = {
+        "unit_ticks": 4.0 * ppq * score.unit_num / score.unit_den,
+        "bar_ticks": 4.0 * ppq * score.meter[0] / score.meter[1],
+        "key_acc": _key_accidentals(_key_fifths(score.key)[0]),
+    }
+    states: dict[str, _VoiceState] = {}
     current_voice: str | None = None
+    in_header = True
 
     def ensure_voice(name: str) -> None:
         if name not in score.voices:
             score.voices[name] = []
             score.voice_order.append(name)
-            cursor_by_voice[name] = 0
+            states[name] = _VoiceState(cursor=0)
 
-    in_header = True
     for raw in text.splitlines():
         line = _strip_comment(raw)
         stripped = line.strip()
         if not stripped:
             continue
+
+        fld = ""
+        rest = ""
         if ":" in stripped:
-            fld = stripped.split(":", 1)[0].strip()
-        else:
-            fld = ""
+            head, tail = stripped.split(":", 1)
+            head = head.strip()
+            # A field line has a single-letter name; things like "|:E2F2|"
+            # must be treated as music, not as a field.
+            if len(head) == 1 and head.isalpha():
+                fld = head
+                rest = tail.strip()
 
         if fld == "K":
             in_header = False
+            key_token = rest.split()[0] if rest.split() else "C"
+            ctx["key_acc"] = _key_accidentals(_key_fifths(key_token)[0])
             continue
-        if in_header:
+        if fld == "M":
+            m = _parse_meter(rest)
+            if m:
+                score.meter = m
+                ctx["bar_ticks"] = 4.0 * ppq * m[0] / m[1]
             continue
-
+        if fld == "L":
+            u = _parse_unit(rest)
+            if u:
+                score.unit_num, score.unit_den = u
+                ctx["unit_ticks"] = 4.0 * ppq * u[0] / u[1]
+            continue
         if fld == "V":
-            _, rest = stripped.split(":", 1)
-            rest = rest.strip()
-            if not rest:
-                continue
-            name = rest.split()[0]
-            tail = rest[len(name):]
-            is_definition = ("clef=" in tail or "snm=" in tail or "name=" in tail)
-            if is_definition and not tail.strip().startswith(('"', "z", "Z")):
-                # Voice declaration, not music.
-                ensure_voice(name)
-                current_voice = name
+            parts = rest.split(None, 1)
+            name = parts[0] if parts else ""
+            tail = parts[1] if len(parts) > 1 else ""
+            if not name:
                 continue
             ensure_voice(name)
             current_voice = name
-            music = tail.strip()
-            if music:
-                cursor_by_voice[name] = _parse_music(
-                    music, score.voices[name], cursor_by_voice[name],
-                    4.0 * ppq * score.unit_num / score.unit_den,
-                    _key_accidentals(fifths), score.warnings,
-                )
+            # Strip definition attributes (clef=..., name="..."), then parse
+            # any music that remains on the same line.
+            music = _ATTR_RE.sub(" ", tail).strip()
+            if music and _MUSIC_RE.search(music):
+                _parse_music(music, score.voices[name], states[name], ctx,
+                             score.warnings)
+            continue
+        if fld:
+            # Other field lines (T/Q/X/N/...) carry no music.
             continue
 
-        # Music continuation line (no V: prefix) belongs to current voice.
-        if current_voice and fld == "":
-            cursor_by_voice[current_voice] = _parse_music(
-                stripped, score.voices[current_voice], cursor_by_voice[current_voice],
-                4.0 * ppq * score.unit_num / score.unit_den,
-                _key_accidentals(fifths), score.warnings,
-            )
+        # Music continuation line without a V: prefix.
+        if current_voice and not in_header:
+            _parse_music(stripped, score.voices[current_voice],
+                         states[current_voice], ctx, score.warnings)
 
     if not score.voices:
         score.warnings.append("未找到任何 V: 声部；无法生成 MIDI")
@@ -548,7 +727,7 @@ def render_voice_midi(
 
     # --- meta events at tick 0 ---
     events.append((0, 0, _meta(0x03, track_name.encode("utf-8", "replace"))))
-    us_per_quarter = int(round(60_000_000 / max(1.0, tempo_bpm)))
+    us_per_quarter = min(0xFFFFFF, int(round(60_000_000 / max(1.0, tempo_bpm))))
     events.append((0, 0, _meta(0x51, struct.pack(">I", us_per_quarter)[1:])))
     num, den = meter
     dd = int(round(math.log2(den))) if den > 0 else 2
@@ -584,24 +763,68 @@ def render_voice_midi(
 # --------------------------------------------------------------------------- #
 # High-level conversion
 # --------------------------------------------------------------------------- #
-_VOCAL_ALIASES = ("vocal", "voice", "vocal melody", "singer", "人声", "主旋律", "melody")
+_VOCAL_PREFIXES = (
+    "vocal", "voice", "voc", "singer", "lead", "melody", "mel",
+    "人声", "歌声", "主旋",
+)
+_ACCOMP_PREFIXES = (
+    "ins", "inst", "instr", "acc", "accomp", "acom", "bass", "drum", "perc",
+    "piano", "keys", "guitar", "chord", "pad", "strings", "伴奏", "器乐",
+)
 
 
 def _classify_voices(score: ParsedScore) -> tuple[list[str], list[str]]:
     """Split discovered voices into (vocal, accompaniment) name lists."""
     vocal: list[str] = []
     accomp: list[str] = []
+    unknown: list[str] = []
+
     for name in score.voice_order:
         low = name.lower()
-        if any(alias in low for alias in _VOCAL_ALIASES):
+        if low.startswith(_VOCAL_PREFIXES):
             vocal.append(name)
-        else:
+        elif low.startswith(_ACCOMP_PREFIXES):
             accomp.append(name)
-    if not vocal and score.voice_order:
-        # No explicit vocal name: treat the first voice as the melody.
-        vocal.append(score.voice_order[0])
-        accomp = [n for n in score.voice_order[1:]]
+        else:
+            unknown.append(name)
+
+    if not vocal and unknown:
+        # No explicitly named vocal voice: treat the first unclassified voice
+        # as the melody, but never promote a known accompaniment voice.
+        vocal.append(unknown.pop(0))
+        score.warnings.append(
+            f"未找到明确的歌声声部，已将声部 {vocal[0]!r} 作为旋律"
+        )
+    accomp.extend(unknown)
+
+    if len(accomp) > 1:
+        score.warnings.append(
+            f"检测到多个伴奏声部 {accomp}，已合并到 accompaniment.mid"
+        )
+    if not vocal:
+        score.warnings.append("未找到歌声声部，vocal.mid 将为空")
     return vocal, accomp
+
+
+def _safe_target(out_dir: str, filename: str) -> str:
+    """Resolve ``filename`` inside ``out_dir``, rejecting path traversal.
+
+    Absolute paths and any path separator are rejected outright (rather than
+    silently rewritten) so a mistyped CLI argument fails loudly.
+    """
+    if not filename or filename in (".", ".."):
+        raise ValueError(f"非法文件名: {filename!r}")
+    if os.path.isabs(filename) or "/" in filename or "\\" in filename:
+        raise ValueError(f"文件名不得包含路径分隔符: {filename!r}")
+    root = os.path.abspath(out_dir)
+    target = os.path.abspath(os.path.join(root, filename))
+    try:
+        inside = os.path.commonpath([root, target]) == root
+    except ValueError:  # different drives on Windows
+        inside = False
+    if not inside:
+        raise ValueError(f"文件名越界: {filename!r}")
+    return target
 
 
 def abc_to_midi(
@@ -670,12 +893,12 @@ def abc_to_midi_files(
     """Convert ABC text and write both MIDI files into ``out_dir``.
 
     Returns a dict with absolute paths and metadata.  ``out_dir`` is created
-    if it does not exist.
+    if it does not exist; filenames are constrained to stay inside it.
     """
     os.makedirs(out_dir, exist_ok=True)
+    v_path = _safe_target(out_dir, vocal_filename)
+    a_path = _safe_target(out_dir, accompaniment_filename)
     result = abc_to_midi(text, ppq=ppq)
-    v_path = os.path.abspath(os.path.join(out_dir, vocal_filename))
-    a_path = os.path.abspath(os.path.join(out_dir, accompaniment_filename))
     with open(v_path, "wb") as fh:
         fh.write(result.vocal_midi)
     with open(a_path, "wb") as fh:

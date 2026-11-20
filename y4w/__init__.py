@@ -12,7 +12,7 @@ Lloyd-Max codebook, per-row bfloat16 scales, RPBH rotation).
 
 from __future__ import annotations
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 __all__ = ["__version__", "get_engine", "Engine", "detect_backends"]
 
 from .runtime.engine import Engine, get_engine

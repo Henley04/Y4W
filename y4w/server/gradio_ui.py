@@ -10,7 +10,9 @@ Two tabs:
 """
 from __future__ import annotations
 
+import glob
 import json
+import os
 import tempfile
 from typing import Any, Callable
 
@@ -36,11 +38,23 @@ def build_gradio_interface(generate_fn: Callable[..., dict[str, Any]],
         """Convert ABC text -> two downloadable MIDI files + info JSON."""
         if not abc_text or not abc_text.strip():
             raise gr.Error("请先粘贴 ABC 乐谱文本")
-        out_dir = tempfile.mkdtemp(prefix="y4w_abc_")
+        # Reuse one download directory and clear stale files each run, so
+        # repeated conversions do not accumulate temp directories on disk.
+        out_dir = os.path.join(tempfile.gettempdir(), "y4w_abc2midi")
+        os.makedirs(out_dir, exist_ok=True)
+        for old in glob.glob(os.path.join(out_dir, "*.mid")):
+            try:
+                os.remove(old)
+            except OSError:
+                pass
         try:
             data = abc_to_midi_files(abc_text, out_dir)
         except Exception as exc:
             raise gr.Error(f"ABC 转换失败: {type(exc).__name__}: {exc}")
+        if not data["voices"] or (
+            data["vocal_note_count"] + data["accompaniment_note_count"]
+        ) == 0:
+            raise gr.Error("未解析出任何声部或音符，请检查 ABC 文本（需含 K: 与 V: 声部）")
         info = {
             "声部": data["voices"],
             "歌声音符数": data["vocal_note_count"],

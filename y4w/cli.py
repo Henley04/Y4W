@@ -181,16 +181,24 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "abc2midi":
         from .abc2midi import abc_to_midi_files
         if args.abc_file:
-            with open(args.abc_file, "r", encoding="utf-8") as fh:
-                abc_text = fh.read()
+            try:
+                with open(args.abc_file, "r", encoding="utf-8") as fh:
+                    abc_text = fh.read()
+            except OSError as exc:
+                print(f"[y4w] 无法读取 {args.abc_file}: {exc}", file=sys.stderr)
+                return 2
         else:
             abc_text = args.abc
-        data = abc_to_midi_files(
-            abc_text,
-            args.out_dir,
-            vocal_filename=args.vocal_filename,
-            accompaniment_filename=args.accompaniment_filename,
-        )
+        try:
+            data = abc_to_midi_files(
+                abc_text,
+                args.out_dir,
+                vocal_filename=args.vocal_filename,
+                accompaniment_filename=args.accompaniment_filename,
+            )
+        except (ValueError, OSError) as exc:
+            print(f"[y4w] ABC 转换失败: {exc}", file=sys.stderr)
+            return 2
         payload = {
             "ok": True,
             "vocal_path": data["vocal_path"],
@@ -201,6 +209,13 @@ def main(argv: list[str] | None = None) -> int:
             "warnings": data["warnings"],
         }
         print(json.dumps(payload, indent=2, ensure_ascii=False))
+        if data["vocal_note_count"] + data["accompaniment_note_count"] == 0:
+            print(
+                "[y4w] 错误：未解析出任何音符（检查 ABC 是否含 K: 字段与 "
+                "V: 声部，且音符使用 ABC 记谱）",
+                file=sys.stderr,
+            )
+            return 2
         return 0
 
     parser.print_help()

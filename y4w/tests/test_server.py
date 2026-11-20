@@ -104,6 +104,17 @@ def test_abc2midi_rejects_empty(client):
     assert client.post("/v1/abc2midi", json={"abc": "  "}).status_code == 400
 
 
+def test_abc2midi_rejects_unparsable_score(client):
+    # No K:/V: fields -> nothing to convert; must not return a fake success.
+    r = client.post("/v1/abc2midi", json={"abc": "hello world :::"})
+    assert r.status_code == 422
+
+
+def test_abc2midi_rejects_oversized_input(client):
+    r = client.post("/v1/abc2midi", json={"abc": "C2" * 120_000})
+    assert r.status_code == 422
+
+
 # --- generator callable / engine factory ------------------------------------
 
 def test_create_engine_overrides():
@@ -170,3 +181,13 @@ def test_cli_abc2midi(tmp_path):
     assert (tmp_path / "vocal.mid").exists()
     assert (tmp_path / "accompaniment.mid").exists()
     assert (tmp_path / "vocal.mid").read_bytes()[:4] == b"MThd"
+
+
+def test_cli_abc2midi_empty_score_nonzero(tmp_path):
+    r = subprocess.run(
+        [sys.executable, "-m", "y4w", "abc2midi", "--abc", "hello world",
+         "--out-dir", str(tmp_path)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode != 0
+    assert "未解析出任何音符" in r.stderr

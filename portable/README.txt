@@ -5,10 +5,10 @@
 一、解压（重要）
 ----------------------------------------------------------------
 本整合包因体积超过 GitHub 单文件 2 GiB 限制，被拆成多个分卷：
-    Y4W-Portable-CUDA132-v0.2.0.z01
-    Y4W-Portable-CUDA132-v0.2.0.z02
+    Y4W-Portable-CUDA132-v0.2.1.z01
+    Y4W-Portable-CUDA132-v0.2.1.z02
     ...
-    Y4W-Portable-CUDA132-v0.2.0.zip   <- 最后一个是 .zip
+    Y4W-Portable-CUDA132-v0.2.1.zip   <- 最后一个是 .zip
 
 请把【所有分卷】下载到同一个文件夹，然后：
   * 用 Windows 资源管理器：右键 .zip -> "全部解压缩"；或双击 .zip
@@ -60,7 +60,7 @@
 ----------------------------------------------------------------
   * Python 3.11 (x64, 内置于 python\)
   * PyTorch 2.15.0 + CUDA 13.2 (cu132 wheel，含 CUDA 运行库)
-  * y4w 0.2.0 + [serve] 依赖 (fastapi / uvicorn / httpx / gradio)
+  * y4w 0.2.1 + [serve] 依赖 (fastapi / uvicorn / httpx / gradio)
   * 内置零依赖 abc2midi：ABC 乐谱按声部拆成歌声/伴奏两个 MIDI
   * 无需系统安装 Python，无需 pip install，解压即用
   * CUDA 加速需要 NVIDIA 驱动支持 CUDA 13.2（建议 580+ 驱动）；
@@ -69,7 +69,7 @@
 
 六、目录结构
 ----------------------------------------------------------------
-  Y4W-Portable-CUDA132-v0.2.0\
+  Y4W-Portable-CUDA132-v0.2.1\
     python\                    内置 Python 运行时 + 所有依赖
     1-START-WebUI.bat          一键服务
     2-RUN-CLI.bat              一键 CLI
