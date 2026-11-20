@@ -57,6 +57,22 @@ class Backend:
         """Execute a W4A4 linear layer."""
         raise NotImplementedError
 
+    def linear_int8(self, x: torch.Tensor, w_int8: torch.Tensor,
+                    w_scales: torch.Tensor,
+                    bias: torch.Tensor | None = None) -> torch.Tensor:
+        """Execute a linear layer with baked int8 weights.
+
+        Default implementation uses the portable torch path; CUDA overrides it
+        with DP4A (``torch._int_mm``). ``use_dp4a`` is implied by the backend.
+        """
+        from ..quant.int8 import int8_linear
+        return int8_linear(x, w_int8, w_scales, bias, use_dp4a=False)
+
+    @property
+    def prefer_baked_int8(self) -> bool:
+        """Whether this backend benefits from baked-int8 weights."""
+        return False
+
     def synchronize(self) -> None:
         """Wait for all queued work (used for timing). No-op on CPU."""
 

@@ -46,6 +46,12 @@ def build_parser() -> argparse.ArgumentParser:
     gen.add_argument("--seed", type=int, default=None)
     gen.add_argument("--kv-cache-dtype", choices=["bf16", "int8"], default="bf16")
     gen.add_argument("--cfg-scale", type=_guidance, default=None)
+    gen.add_argument("--no-optimize", action="store_true",
+                     help="Disable all accelerations (pure reference path)")
+    gen.add_argument("--no-compile", action="store_true",
+                     help="Disable torch.compile / CUDA graphs")
+    gen.add_argument("--int8-kv", action="store_true",
+                     help="Use int8 KV cache (halves KV-cache memory)")
     gen.add_argument("--output", help="Write JSON result to this file")
 
     srv = sub.add_parser(
@@ -63,7 +69,27 @@ def build_parser() -> argparse.ArgumentParser:
                      help="auto-mode priority: cuda-first (default) or tensorrt-first")
     srv.add_argument("--no-webui", action="store_true",
                      help="Run the REST API only (skip the Gradio WebUI)")
+    srv.add_argument("--no-optimize", action="store_true",
+                     help="Disable all accelerations (pure reference path)")
+    srv.add_argument("--no-compile", action="store_true",
+                     help="Disable torch.compile / CUDA graphs")
+    srv.add_argument("--int8-kv", action="store_true",
+                     help="Use int8 KV cache (halves KV-cache memory)")
     return parser
+
+
+def _accel_config(base_engine_config, args):
+    """Apply CLI acceleration flags to an EngineConfig (or dict of overrides)."""
+    values = {
+        "optimize": not args.no_optimize,
+        "compile_model": not args.no_compile,
+        "int8_kv_cache": args.int8_kv,
+    }
+    if hasattr(base_engine_config, "__dict__") and hasattr(base_engine_config, "optimize"):
+        for k, v in values.items():
+            setattr(base_engine_config, k, v)
+        return base_engine_config
+    return values
 
 
 def cmd_info() -> dict:
@@ -109,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
             kv_cache_dtype=args.kv_cache_dtype,
             seed=args.seed,
         )
+        cfg = _accel_config(cfg, args)
         engine = Engine(cfg)
         result = engine.generate(
             args.prompt,
@@ -134,6 +161,7 @@ def main(argv: list[str] | None = None) -> int:
             backend=args.backend,
             profile=args.profile,
         )
+        cfg = _accel_config(cfg, args)
         run_server(host=args.host, port=args.port, config=cfg,
                    mount_webui=not args.no_webui)
         return 0

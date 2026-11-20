@@ -67,6 +67,7 @@ jobs:
             'y4w/backends/tensorrt_rtx.py',
             'y4w/backends/vulkan.py',
             'y4w/server/app.py',
+            'y4w/quant/int8.py',
             'y4w/kernels/w4a4_native.cu'
           )
           foreach ($n in $need) {

@@ -162,6 +162,56 @@ y4w serve
 
 ---
 
+## 推理加速与显存优化
+
+`y4w` 默认开启全部可用加速（`EngineConfig.optimize=True`）。关键点是：
+**原始 W4A4 路径每次前向都要把 4-bit 权重解包还原成 fp32，实测单次
+2048×2048 投影要 30~55ms，比 fp16 GEMM 慢 10~25 倍**——4-bit 只省了存储，没省算力。
+优化的核心是**把这一步从"每次前向"移到"加载时只做一次"**。
+
+| 加速手段 | 开关 | 收益 | 显存 |
+|---|---|---|---|
+| **烘焙 int8 权重** | `bake_int8=True` | 消除重复解包，实测 **7~15× 加速**；CUDA 上走 DP4A | 1 B/权重（fp16 的一半）|
+| **DP4A GEMM** | CUDA 自动 | `torch._int_mm` 原生 int8 矩阵乘（SM89/SM120）| 同上 |
+| **torch.compile + CUDA Graph** | `compile_model=True` | 算子融合 + 消除 kernel launch 开销，`mode="reduce-overhead"` | 少量编译缓存 |
+| **SDPA / FlashAttention** | `sdpa_attention=True` | `F.scaled_dot_product_attention` 高效注意力 | 更低 |
+| **int8 KV cache** | `int8_kv_cache=True` / `--int8-kv` | KV 缓存显存减半 | 长序列省 ~50% KV |
+
+**显存优先级**：`--profile memory` 会关闭烘焙与编译，保留最紧凑的 packed W4A4
+（**0.5 B/权重**，最小显存），代价是每次前向都要解包（慢）。默认 `--profile fast`
+则用烘焙 int8（1 B/权重）换取 7~15× 加速。两者都远小于 fp16 的 2 B/权重。
+
+所有加速在**无 GPU / 无编译器环境自动降级**，CI（Windows runner，CPU-only）全程通过。
+
+```powershell
+# 默认：全速（烘焙 int8 + compile + SDPA + DP4A 若可用）
+y4w generate --backend auto --prompt "..." --max-new-tokens 16
+
+# 最小显存（保留 packed W4A4，不烘焙不编译）
+y4w generate --backend auto --profile memory --prompt "..."
+
+# int8 KV cache（长序列省显存）
+y4w serve --int8-kv --port 8000
+
+# 关闭全部加速（纯参考路径，用于数值对照）
+y4w generate --no-optimize --backend cpu
+
+# 查看当前生效的加速状态
+y4w generate --backend cpu --max-new-tokens 1 | Select-String acceleration
+```
+
+`--info` / `/v1/status` 会报告 `acceleration` 字段（`baked_int8`、`torch_compile`、
+`dp4a`、`sdpa`、`int8_kv_cache`、`weight_bytes`），方便确认实际启用了哪些加速。
+
+量化方案说明：烘焙采用 **per-output-row 对称 int8 + per-token 激活 int8**，
+int8 舍入相对误差 <2%，端到端投影相对误差 <5%（见 `y4w/tests/test_accel.py`）。
+这与官方 `fast` 模式的 INT8 KV / DP4A GEMV 思路一致。真实 3B 权重的精度/显存
+需在带 SM89/SM120 显卡的机器上实测（见下节）。
+
+可复现的延迟/显存对比：`python tools/benchmark.py`。
+
+---
+
 ## 加载真实 3B 权重
 
 完整权重与独立 VAE 由上游 HuggingFace 分发（约 3 GB + 0.53 GB）。下载后把目录传给

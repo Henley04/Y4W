@@ -24,6 +24,12 @@ class EngineConfig:
     max_seq_len: int = 24576
     seed: int | None = None
     strict_capability: bool = True  # reject non-SM89/SM120 GPUs in CUDA auto mode
+    # Acceleration knobs (all safe to enable; degrade gracefully without GPU).
+    optimize: bool = True            # master switch: enable all available accelerations
+    compile_model: bool = True       # torch.compile(mode="reduce-overhead") + CUDA graphs
+    bake_int8: bool = True           # bake W4A4 -> int8 once for DP4A fast path
+    sdpa_attention: bool = True      # use F.scaled_dot_product_attention (FlashAttention)
+    int8_kv_cache: bool = False      # store KV cache as int8 (saves ~50% KV memory)
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
 
     PROFILES = ("reference", "fused", "fast", "memory")

@@ -25,9 +25,17 @@ from .packed import (
     quantized_matmul,
     w4a4_linear,
 )
+from .int8 import (
+    bake_int8_from_packed,
+    bake_int8_from_float,
+    quantize_activation_int8,
+    int8_linear,
+)
 
 __all__ = [
     "BITS", "LEVELS", "lloyd_max_codebook", "codebook_from_manifest",
     "quantize_to_codes", "dequantize_codes", "pack_nibbles", "unpack_nibbles",
     "dequantize_w4a4", "quantized_matmul", "w4a4_linear",
+    "bake_int8_from_packed", "bake_int8_from_float",
+    "quantize_activation_int8", "int8_linear",
 ]

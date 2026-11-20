@@ -89,6 +89,23 @@ class CUDABackend(Backend):
                 self._native = None
         return quantized_matmul(x, packed, scales, codebook, activation_bits=4)
 
+    @property
+    def prefer_baked_int8(self) -> bool:
+        # DP4A is available on SM89/SM120 (the validated target set).
+        return True
+
+    def linear_int8(self, x, w_int8, w_scales, bias=None):
+        from ..quant.int8 import int8_linear
+        dev = torch.device(self.device)
+        x = x.to(dev) if isinstance(x, torch.Tensor) else x
+        w_int8 = w_int8.to(dev) if isinstance(w_int8, torch.Tensor) else w_int8
+        w_scales = w_scales.to(dev) if isinstance(w_scales, torch.Tensor) else w_scales
+        if bias is not None:
+            bias = bias.to(dev)
+        # torch._int_mm (DP4A) requires CUDA int8; fall back to portable if the
+        # build lacks it or the shapes are unsupported.
+        return int8_linear(x, w_int8, w_scales, bias, use_dp4a=True)
+
     def synchronize(self) -> None:
         torch.cuda.synchronize(torch.device(self.device))
 

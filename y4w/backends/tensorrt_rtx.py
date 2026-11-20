@@ -99,6 +99,12 @@ class TensorRTRTXBackend(Backend):
         except Exception as exc:
             raise BackendInitError(f"Failed to load TensorRT engine {path!r}: {exc}") from exc
 
+    @property
+    def prefer_baked_int8(self) -> bool:
+        # INT8 DP4A is the fast path on NVIDIA; baked weights also feed a
+        # serialized engine's int8 bindings.
+        return True
+
     def linear(self, x, packed, scales, codebook=None):
         dev = torch.device(self.device)
         x = x.to(dev) if isinstance(x, torch.Tensor) else x
