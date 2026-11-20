@@ -22,6 +22,21 @@ def _guidance(value: str) -> float:
     return v
 
 
+def _utf8_stdio() -> None:
+    """Force UTF-8 on stdout/stderr.
+
+    Windows consoles default to the ANSI code page (cp1252 on CI runners),
+    which cannot encode Chinese diagnostics and would crash the CLI with
+    ``UnicodeEncodeError``.  The one-click .bat files already run
+    ``chcp 65001``; this makes direct ``python -m y4w`` safe too.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):  # non-TextIOWrapper / detached
+            pass
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="y4w",
@@ -124,6 +139,7 @@ def cmd_info() -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
+    _utf8_stdio()
     parser = build_parser()
     args = parser.parse_args(argv)
 

@@ -166,6 +166,7 @@ def test_cli_serve_help():
     r = subprocess.run(
         [sys.executable, "-m", "y4w", "serve", "--help"],
         capture_output=True, text=True, timeout=60,
+        encoding="utf-8", errors="replace",
     )
     assert r.returncode == 0, r.stderr
     assert "--port" in r.stdout and "--no-webui" in r.stdout
@@ -176,6 +177,7 @@ def test_cli_abc2midi(tmp_path):
         [sys.executable, "-m", "y4w", "abc2midi", "--abc", SAMPLE_ABC,
          "--out-dir", str(tmp_path)],
         capture_output=True, text=True, timeout=60,
+        encoding="utf-8", errors="replace",
     )
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "vocal.mid").exists()
@@ -188,6 +190,7 @@ def test_cli_abc2midi_empty_score_nonzero(tmp_path):
         [sys.executable, "-m", "y4w", "abc2midi", "--abc", "hello world",
          "--out-dir", str(tmp_path)],
         capture_output=True, text=True, timeout=60,
+        encoding="utf-8", errors="replace",
     )
     assert r.returncode != 0
     assert "未解析出任何音符" in r.stderr
