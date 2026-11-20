@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "y4w"
-version = "0.1.0"
+version = "0.2.0"
 description = "Windows-native YuE2 OrbitQuant W4A4 inference engine with CUDA / TensorRT-RTX / Vulkan backends"
 readme = "README.md"
 requires-python = ">=3.10"

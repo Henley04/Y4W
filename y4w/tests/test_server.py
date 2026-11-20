@@ -79,6 +79,31 @@ def test_openapi_docs_available(client):
     assert client.get("/docs").status_code == 200
 
 
+# --- ABC -> MIDI endpoint ---------------------------------------------------
+
+SAMPLE_ABC = (
+    "X:1\nT:T\nM:4/4\nL:1/16\nQ:1/4=88\n"
+    'V: Vocal clef=treble name="Vocal" snm="Vocal"\n'
+    'V: Ins clef=treble name="Ins" snm="Inst."\n'
+    "K:C\nV: Vocal C2E2G2c2|\nV: Ins C,2G,2C2E2|\n"
+)
+
+
+def test_abc2midi_endpoint(client):
+    r = client.post("/v1/abc2midi", json={"abc": SAMPLE_ABC})
+    assert r.status_code == 200
+    d = r.json()
+    assert d["ok"] is True
+    assert d["vocal_note_count"] == 4
+    assert d["accompaniment_note_count"] == 4
+    assert d["vocal_midi_b64"].startswith("TVRo")  # "MThd" base64
+    assert d["accompaniment_midi_b64"].startswith("TVRo")
+
+
+def test_abc2midi_rejects_empty(client):
+    assert client.post("/v1/abc2midi", json={"abc": "  "}).status_code == 400
+
+
 # --- generator callable / engine factory ------------------------------------
 
 def test_create_engine_overrides():
@@ -133,3 +158,15 @@ def test_cli_serve_help():
     )
     assert r.returncode == 0, r.stderr
     assert "--port" in r.stdout and "--no-webui" in r.stdout
+
+
+def test_cli_abc2midi(tmp_path):
+    r = subprocess.run(
+        [sys.executable, "-m", "y4w", "abc2midi", "--abc", SAMPLE_ABC,
+         "--out-dir", str(tmp_path)],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "vocal.mid").exists()
+    assert (tmp_path / "accompaniment.mid").exists()
+    assert (tmp_path / "vocal.mid").read_bytes()[:4] == b"MThd"

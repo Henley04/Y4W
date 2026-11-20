@@ -79,7 +79,7 @@ y4w serve --backend-priority tensorrt
 
 | 入口 | 地址 | 说明 |
 |---|---|---|
-| **Gradio WebUI** | http://127.0.0.1:8000/ | 文本框输入 prompt，滑块调 tokens/temperature/seed |
+| **Gradio WebUI** | http://127.0.0.1:8000/ | 两个 Tab：文本生成；ABC→MIDI（双声部拆两个文件下载） |
 | **REST API** | http://127.0.0.1:8000/v1/generate | JSON 请求/响应 |
 | **API 文档** | http://127.0.0.1:8000/docs | Swagger UI，可在线调试 |
 
@@ -91,6 +91,7 @@ REST API 端点：
 | GET | `/v1/status` | 引擎状态、后端能力、配置、manifest 摘要 |
 | GET | `/v1/backends` | 后端可用性、优先级策略、auto 顺序 |
 | POST | `/v1/generate` | 推理，`{prompt, max_new_tokens, temperature, seed}` |
+| POST | `/v1/abc2midi` | ABC 乐谱 → `{vocal_midi_b64, accompaniment_midi_b64, ...}` |
 
 curl 示例：
 
@@ -103,6 +104,41 @@ curl -X POST http://127.0.0.1:8000/v1/generate \
 > **说明**：Gradio 是可选依赖。未安装时 `y4w serve` 仍会启动纯 REST API
 > 并在终端提示 WebUI 不可用，不会报错。生成请求在服务内串行执行（后端持有
 > CUDA context / 原生 kernel，非线程安全）。
+
+## 2.1 ABC → MIDI：歌声 / 伴奏双文件导出
+
+YuE2 的符号规划输出的是**双声部 ABC 乐谱**（`V: Vocal` 歌声带引号和弦、
+`V: Ins` 伴奏）。Y4W 内置**零依赖**的 `y4w.abc2midi`（纯标准库，不需要
+`abc2midi` 二进制、music21 或 mido），按声部拆成两个标准 MIDI 文件：
+
+- `vocal.mid` — 歌声旋律轨
+- `accompaniment.mid` — 伴奏轨
+
+输出为 SMF format 1（480 PPQ），含速度、拍号、调号、program change 与
+note on/off。三种入口任选：
+
+```bash
+# CLI：从 .abc 文件或内联文本转换
+y4w abc2midi --abc-file score.abc --out-dir ./out
+y4w abc2midi --abc "X:1\nK:C\nV: Vocal C2E2|\nV: Ins C,2G,2|\n" --out-dir ./out
+
+# WebUI：y4w serve 后切到 "ABC → MIDI" Tab，粘贴 ABC，点“转换为 MIDI”下载两个文件
+
+# REST API
+curl -X POST http://127.0.0.1:8000/v1/abc2midi \
+  -H "Content-Type: application/json" -d '{"abc":"X:1\nK:C\nV: Vocal C2E2|\nV: Ins C,2G,2|\n"}'
+```
+
+```python
+from y4w.abc2midi import abc_to_midi, abc_to_midi_files
+
+r = abc_to_midi(abc_text)               # 得到 raw bytes（API 用）
+r.to_dict(base64=True)                   # JSON 友好的 base64 结果
+abc_to_midi_files(abc_text, "./out")     # 直接写出两个 .mid 文件
+```
+
+> 说明：转换器只解析音符时值与音高，引号内的和弦标记（如 `"C"`、`"Am7"`）
+> 作为伴奏提示被忽略，不写入音符轨；多首曲子只转换第一首（`X:1`）。
 
 ## 3. Python API
 

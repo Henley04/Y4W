@@ -5,6 +5,7 @@ Endpoints (all work with or without Gradio installed):
     GET  /v1/status       engine + backend diagnostics
     GET  /v1/backends     backend availability / priority policy
     POST /v1/generate     run inference
+    POST /v1/abc2midi     convert a YuE2 ABC score into vocal + accompaniment MIDI
 
 When Gradio is available, its WebUI is mounted at ``/`` so a single
 ``y4w serve`` process provides the UI, the REST API and OpenAPI docs at
@@ -46,11 +47,17 @@ if _HAS_FASTAPI:
         token_count: int
         backend: str
         elapsed_seconds: float
+
+    class Abc2MidiRequest(BaseModel):
+        abc: str = Field(..., description="YuE2 two-voice ABC score text")
 else:  # pragma: no cover
     class GenerateRequest:  # type: ignore
         pass
 
     class GenerateResponse:  # type: ignore
+        pass
+
+    class Abc2MidiRequest:  # type: ignore
         pass
 
 
@@ -138,6 +145,28 @@ def create_app(config: EngineConfig | None = None, *,
     def generate(req: GenerateRequest) -> dict[str, Any]:
         return generate_fn(req.prompt, req.max_new_tokens,
                            req.temperature, req.seed)
+
+    @app.post("/v1/abc2midi")
+    def abc2midi(req: Abc2MidiRequest) -> dict[str, Any]:
+        """Convert a YuE2 ABC score into two base64-encoded MIDI files."""
+        from ..abc2midi import abc_to_midi
+        if not req.abc or not req.abc.strip():
+            from fastapi import HTTPException
+            raise HTTPException(status_code=400, detail="abc must not be empty")
+        try:
+            result = abc_to_midi(req.abc)
+        except Exception as exc:  # malformed ABC -> surface a clear error
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=422,
+                detail=f"ABC conversion failed: {type(exc).__name__}: {exc}",
+            )
+        payload = result.to_dict(base64=True)
+        # Return base64 fields only (drop the raw byte-list fields).
+        payload.pop("vocal_midi", None)
+        payload.pop("accompaniment_midi", None)
+        payload["ok"] = True
+        return payload
 
     if mount_webui:
         try:

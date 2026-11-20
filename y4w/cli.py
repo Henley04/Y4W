@@ -75,6 +75,18 @@ def build_parser() -> argparse.ArgumentParser:
                      help="Disable torch.compile / CUDA graphs")
     srv.add_argument("--int8-kv", action="store_true",
                      help="Use int8 KV cache (halves KV-cache memory)")
+
+    am = sub.add_parser(
+        "abc2midi",
+        help="Convert a YuE2 two-voice ABC score into vocal + accompaniment MIDI files",
+    )
+    src = am.add_mutually_exclusive_group(required=True)
+    src.add_argument("--abc", help="ABC score text (inline)")
+    src.add_argument("--abc-file", help="Path to a .abc file")
+    am.add_argument("--out-dir", default=".",
+                    help="Directory for vocal.mid / accompaniment.mid (default: .)")
+    am.add_argument("--vocal-filename", default="vocal.mid")
+    am.add_argument("--accompaniment-filename", default="accompaniment.mid")
     return parser
 
 
@@ -164,6 +176,31 @@ def main(argv: list[str] | None = None) -> int:
         cfg = _accel_config(cfg, args)
         run_server(host=args.host, port=args.port, config=cfg,
                    mount_webui=not args.no_webui)
+        return 0
+
+    if args.command == "abc2midi":
+        from .abc2midi import abc_to_midi_files
+        if args.abc_file:
+            with open(args.abc_file, "r", encoding="utf-8") as fh:
+                abc_text = fh.read()
+        else:
+            abc_text = args.abc
+        data = abc_to_midi_files(
+            abc_text,
+            args.out_dir,
+            vocal_filename=args.vocal_filename,
+            accompaniment_filename=args.accompaniment_filename,
+        )
+        payload = {
+            "ok": True,
+            "vocal_path": data["vocal_path"],
+            "accompaniment_path": data["accompaniment_path"],
+            "vocal_note_count": data["vocal_note_count"],
+            "accompaniment_note_count": data["accompaniment_note_count"],
+            "voices": data["voices"],
+            "warnings": data["warnings"],
+        }
+        print(json.dumps(payload, indent=2, ensure_ascii=False))
         return 0
 
     parser.print_help()
