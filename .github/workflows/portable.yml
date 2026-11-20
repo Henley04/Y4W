@@ -88,12 +88,21 @@ jobs:
           $pipCache = & $py -m pip cache dir 2>$null
           if ($pipCache -and (Test-Path $pipCache)) { Remove-Item $pipCache -Recurse -Force -ErrorAction SilentlyContinue }
 
-          # Drop CUDA compile-only headers/samples if present (runtime unaffected).
+          # Verify the one-command service stack imports from THIS copy
+          # (gradio included), so the WebUI .bat is guaranteed to work after extract.
+          & $py -c "import y4w.server.app, gradio, fastapi, uvicorn; print('service stack OK: gradio', gradio.__version__)"
+
+          # Drop compile-only C++ headers (not needed at inference time).
+          $torchInclude = Join-Path $pyDir 'Lib\site-packages\torch\include'
+          if (Test-Path $torchInclude) { Remove-Item $torchInclude -Recurse -Force -ErrorAction SilentlyContinue }
           $nvInclude = Join-Path $pyDir 'Lib\site-packages\nvidia'
           if (Test-Path $nvInclude) {
             Get-ChildItem -Path $nvInclude -Recurse -Directory -Filter 'include' -ErrorAction SilentlyContinue |
               Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
           }
+          # Python stdlib test suite is dead weight in a shipped runtime.
+          $stdlibTest = Join-Path $pyDir 'Lib\test'
+          if (Test-Path $stdlibTest) { Remove-Item $stdlibTest -Recurse -Force -ErrorAction SilentlyContinue }
 
           # Ship the one-click scripts + docs at the bundle root.
           Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'portable\*.bat') -Destination $bundle -Force
