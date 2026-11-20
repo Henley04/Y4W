@@ -1,0 +1,102 @@
+name: Build & Test (Windows)
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: win-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Primary job: install the package on Windows and run the full test-suite.
+  # GitHub-hosted Windows runners have no GPU, so all four backends are probed,
+  # unavailable ones degrade gracefully, and the CPU reference path executes.
+  test:
+    name: pytest (windows, cpu backend)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+          cache: pip
+
+      - name: Install CPU-only PyTorch
+        # CPU wheel is small and deterministic; GPU execution is validated on a
+        # self-hosted SM89/SM120 runner (see README). Backend probing does not
+        # need a CUDA build to verify graceful degradation.
+        run: python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
+
+      - name: Install package + test deps
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+          python -m pip install -e .[test]
+
+      - name: Show environment
+        run: |
+          python --version
+          python -c "import torch, sys; print('torch', torch.__version__); print('cuda', torch.cuda.is_available())"
+          python -m y4w --info
+
+      - name: Run test suite
+        run: python -m pytest y4w/tests -v --tb=short
+
+      - name: CLI smoke
+        run: |
+          python -m y4w generate --backend cpu --prompt "ci" --max-new-tokens 3 --seed 7
+          python -m y4w --list-backends
+
+  # Verify the Windows packaging metadata / native build config is coherent.
+  # We do not compile CUDA here (no nvcc/GPU on hosted runners); we validate that
+  # the CUDA C++ source and MSVC build script are present and syntactically
+  # wired, so a developer on a real Windows+CUDA box can build straight away.
+  package:
+    name: packaging & native source checks (windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - name: Install build tooling
+        run: python -m pip install --upgrade pip setuptools wheel build
+      - name: Build sdist + wheel
+        run: python -m build
+      - name: Verify wheel contains backends and kernels
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          if (-not $wheel) { throw "no wheel built" }
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zip = [System.IO.Compression.ZipFile]::OpenRead($wheel.FullName)
+          $names = $zip.Entries.FullName
+          $zip.Dispose()
+          $need = @(
+            'y4w/backends/cuda.py',
+            'y4w/backends/tensorrt_rtx.py',
+            'y4w/backends/vulkan.py',
+            'y4w/kernels/w4a4_native.cu',
+            'y4w/runtime/engine.py'
+          )
+          foreach ($n in $need) {
+            if (-not ($names -contains $n)) { throw "wheel missing $n" }
+          }
+          Write-Host "wheel layout OK"
+      - name: Check native source markers
+        shell: pwsh
+        run: |
+          $src = Get-Content y4w\kernels\w4a4_native.cu -Raw
+          if ($src -notmatch 'w4a4_gemv_kernel') { throw 'CUDA kernel entry missing' }
+          if ($src -notmatch 'cuda_runtime.h') { throw 'CUDA runtime include missing' }
+          Write-Host "native CUDA source OK"

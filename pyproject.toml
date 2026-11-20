@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "y4w"
+version = "0.1.0"
+description = "Windows-native YuE2 OrbitQuant W4A4 inference engine with CUDA / TensorRT-RTX / Vulkan backends"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "CC-BY-NC-4.0" }
+authors = [{ name = "Henley04" }]
+keywords = ["yue2", "orbitquant", "w4a4", "inference", "windows", "cuda", "tensorrt", "vulkan", "music-generation"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: C++",
+    "Programming Language :: CUDA",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "torch>=2.2",
+    "numpy>=1.24",
+    "safetensors>=0.4",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+hub = ["huggingface-hub>=0.20", "soundfile>=0.12"]
+all = ["pytest>=7.0", "huggingface-hub>=0.20", "soundfile>=0.12"]
+
+[project.scripts]
+y4w = "y4w.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["y4w*"]
+
+[tool.pytest.ini_options]
+testpaths = ["y4w/tests"]
+python_files = ["test_*.py"]
+addopts = "-q --strict-markers"
+markers = [
+    "cuda: requires an NVIDIA CUDA GPU",
+    "slow: long running test",
+]
+
+[tool.y4w]
+default_backend = "auto"

@@ -1,0 +1,9 @@
+# y4w runtime dependencies. CUDA is optional at install time; the engine
+# auto-detects CUDA / TensorRT-RTX / Vulkan and falls back to CPU.
+torch>=2.2
+numpy>=1.24
+safetensors>=0.4
+
+# Optional (inference artifacts / model download)
+# huggingface-hub>=0.20
+# soundfile>=0.12
