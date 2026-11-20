@@ -1,0 +1,162 @@
+name: Portable Bundle (CUDA 13.2)
+
+# Build a "extract-and-run" Windows bundle: portable CPython 3.11 +
+# PyTorch 2.15.0 + CUDA 13.2 runtime + y4w[serve] + one-click .bat scripts.
+# Because torch cu132 alone is ~1.96 GiB and the full env is several GiB,
+# the archive is split into <2 GiB volumes so it fits GitHub Release assets.
+#
+# Trigger: push a `v*` tag (same as Release) or run manually.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to attach bundle to, e.g. v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: portable-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-portable:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: tag
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $v = "${{ inputs.version }}"
+          } else {
+            $v = $env:GITHUB_REF_NAME
+          }
+          if ($v -notmatch '^v\d') { throw "tag must start with 'v' (got '$v')" }
+          "value=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Bundle for release: $v"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+
+      - name: Install zip (Info-ZIP, supports split volumes)
+        shell: pwsh
+        run: choco install zip -y --no-progress
+
+      - name: Build self-contained Python runtime + CUDA 13.2 torch + y4w
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = Join-Path $env:GITHUB_WORKSPACE 'bundle'
+          $pyDir  = Join-Path $bundle 'python'
+          New-Item -ItemType Directory -Force -Path $pyDir | Out-Null
+
+          # Copy the full setup-python installation -> a relocatable runtime.
+          # pythonLocation points at the x64 CPython root (python.exe at top).
+          Write-Host "Source Python: $env:pythonLocation"
+          Copy-Item -Path (Join-Path $env:pythonLocation '*') -Destination $pyDir -Recurse -Force
+
+          $py = Join-Path $pyDir 'python.exe'
+          & $py --version
+
+          # Fresh pip in the copied runtime.
+          & $py -m pip install --no-cache-dir --upgrade pip setuptools wheel
+
+          # CUDA 13.2 build of PyTorch (cu132 wheel bundles the CUDA runtime).
+          & $py -m pip install --no-cache-dir torch==2.15.0 --index-url https://download.pytorch.org/whl/cu132
+
+          # y4w + one-command service extras (from this checkout).
+          & $py -m pip install --no-cache-dir ".[serve]"
+
+          # Verify the runtime actually imports torch/CUDA and y4w.
+          & $py -c "import torch, y4w; print('torch', torch.__version__, 'cuda_build', torch.version.cuda, 'y4w', y4w.__version__); assert torch.version.cuda == '13.2', 'wrong CUDA build'"
+          & $py -m y4w --info
+
+          # Slim down: bytecode caches + pip/nvidia caches are dead weight.
+          Get-ChildItem -Path $pyDir -Recurse -Directory -Filter '__pycache__' -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem -Path $pyDir -Recurse -Filter '*.pyc' -ErrorAction SilentlyContinue |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+          $pipCache = & $py -m pip cache dir 2>$null
+          if ($pipCache -and (Test-Path $pipCache)) { Remove-Item $pipCache -Recurse -Force -ErrorAction SilentlyContinue }
+
+          # Drop CUDA compile-only headers/samples if present (runtime unaffected).
+          $nvInclude = Join-Path $pyDir 'Lib\site-packages\nvidia'
+          if (Test-Path $nvInclude) {
+            Get-ChildItem -Path $nvInclude -Recurse -Directory -Filter 'include' -ErrorAction SilentlyContinue |
+              Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+          }
+
+          # Ship the one-click scripts + docs at the bundle root.
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'portable\*.bat') -Destination $bundle -Force
+          Copy-Item (Join-Path $env:GITHUB_WORKSPACE 'portable\README.txt') -Destination $bundle -Force
+
+          $size = (Get-ChildItem $bundle -Recurse -File | Measure-Object Length -Sum).Sum
+          Write-Host ("Bundle unpacked size: {0:N2} GiB" -f ($size / 1GB))
+
+      - name: Create split volumes (< 2 GiB each)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bundle = Join-Path $env:GITHUB_WORKSPACE 'bundle'
+          $dist   = Join-Path $env:GITHUB_WORKSPACE 'portable-dist'
+          New-Item -ItemType Directory -Force -Path $dist | Out-Null
+          $tag = "${{ steps.tag.outputs.value }}"
+          $archiveName = "Y4W-Portable-CUDA132-$tag.zip"
+          $archive = Join-Path $dist $archiveName
+
+          # choco may not have refreshed PATH in this session; prefer its abs path.
+          $zipExe = 'C:\ProgramData\chocolatey\bin\zip.exe'
+          if (-not (Test-Path $zipExe)) { $zipExe = (Get-Command zip).Source }
+          Write-Host "Using zip: $zipExe"
+
+          Push-Location $bundle
+          try {
+            # -s 1900m keeps every volume below GitHub's 2 GiB asset ceiling.
+            # Default compression (DLL payloads are already compressed; -9 is slow).
+            & $zipExe -r -s 1900m $archive python *.bat README.txt
+            if ($LASTEXITCODE -ne 0) { throw "zip failed with exit $LASTEXITCODE" }
+          } finally {
+            Pop-Location
+          }
+
+          $parts = Get-ChildItem $dist | Sort-Object Name
+          foreach ($p in $parts) {
+            Write-Host ("{0}  {1:N2} MiB" -f $p.Name, ($p.Length / 1MB))
+            if ($p.Length -ge 2GB) { throw "volume $($p.Name) exceeds 2 GiB limit" }
+          }
+          if ($parts.Count -lt 1) { throw "no volumes produced" }
+
+          # Free runner disk before upload (dist holds everything we need now).
+          Remove-Item $bundle -Recurse -Force -ErrorAction SilentlyContinue
+
+      - name: Upload volumes to GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = "${{ steps.tag.outputs.value }}"
+          $dist = Join-Path $env:GITHUB_WORKSPACE 'portable-dist'
+
+          # The Release job runs on the same tag; make sure it exists first.
+          $ok = $false
+          for ($i = 0; $i -lt 30; $i++) {
+            gh release view $tag *> $null
+            if ($LASTEXITCODE -eq 0) { $ok = $true; break }
+            Start-Sleep -Seconds 10
+          }
+          if (-not $ok) { throw "release $tag not found after waiting" }
+
+          $parts = Get-ChildItem $dist -File | ForEach-Object { $_.FullName }
+          gh release upload $tag @parts --clobber
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed with $LASTEXITCODE" }
+          Write-Host "Uploaded $($parts.Count) volume(s) to release $tag"

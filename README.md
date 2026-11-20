@@ -2,6 +2,7 @@
 
 [![Build & Test (Windows)](https://github.com/Henley04/Y4W/actions/workflows/build-test.yml/badge.svg)](https://github.com/Henley04/Y4W/actions/workflows/build-test.yml)
 [![Release](https://github.com/Henley04/Y4W/actions/workflows/release.yml/badge.svg)](https://github.com/Henley04/Y4W/actions/workflows/release.yml)
+[![Portable Bundle](https://github.com/Henley04/Y4W/actions/workflows/portable.yml/badge.svg)](https://github.com/Henley04/Y4W/actions/workflows/portable.yml)
 
 `y4w` 是面向 **Windows** 的 YuE2 / OrbitQuant W4A4 推理引擎。它实现了与
 [`WaveCut/YuE2-3B-OrbitQuant-W4A4`](https://huggingface.co/WaveCut/YuE2-3B-OrbitQuant-W4A4)
@@ -246,6 +247,28 @@ GitHub Actions 在 `windows-latest`（Python 3.10/3.11/3.12 + service smoke）�
 ```powershell
 pip install https://github.com/Henley04/Y4W/releases/download/v0.1.0/y4w-0.1.0-py3-none-any.whl
 ```
+
+### 免安装整合包（解压即用，CUDA 13.2）
+
+同一个 Release 里还有一个**完整的 Windows 运行环境整合包**
+`Y4W-Portable-CUDA132-*.zip*`，内置 Python 3.11 + PyTorch 2.15.0 (cu132) +
+CUDA 13.2 运行库 + `y4w[serve]`，**无需安装 Python、无需 pip、解压即用**：
+
+1. 下载 Release 里**全部**分卷（`.z01` / `.z02` / … / `.zip`）到同一文件夹
+   （因超过 GitHub 2 GiB 单文件上限而分卷，最后一个是 `.zip`）；
+2. 右键最后的 `.zip` →「全部解压缩」，或用 7-Zip/WinRAR 解压；
+3. 进入解压目录，双击：
+
+| 脚本 | 作用 |
+|---|---|
+| `1-START-WebUI.bat` | 一键启动服务：WebUI `http://127.0.0.1:8000/` + REST API `/docs` |
+| `2-RUN-CLI.bat` | 命令行单次推理，按提示输入 prompt |
+| `3-CHECK-Env.bat` | 自检 Python/PyTorch/CUDA/GPU 型号/后端可用性 |
+
+- 默认 `--backend auto`：CUDA → TensorRT-RTX → Vulkan → CPU，无 GPU 自动回退。
+- CUDA 加速需支持 CUDA 13.2 的 NVIDIA 驱动（建议 580+）；驱动过旧会回退 CPU。
+- 默认跑内置合成网络；加载真实权重见解压包内 `README.txt`。
+- 整合包由 `portable.yml` 在同标签上构建并上传，可单独手动重跑。
 
 ## 致谢与许可
 
