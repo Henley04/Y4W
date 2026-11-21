@@ -5,10 +5,10 @@
 一、解压（重要）
 ----------------------------------------------------------------
 本整合包因体积超过 GitHub 单文件 2 GiB 限制，被拆成多个分卷：
-    Y4W-Portable-CUDA132-v0.2.1.z01
-    Y4W-Portable-CUDA132-v0.2.1.z02
+    Y4W-Portable-CUDA132-v0.2.2.z01
+    Y4W-Portable-CUDA132-v0.2.2.z02
     ...
-    Y4W-Portable-CUDA132-v0.2.1.zip   <- 最后一个是 .zip
+    Y4W-Portable-CUDA132-v0.2.2.zip   <- 最后一个是 .zip
 
 请把【所有分卷】下载到同一个文件夹，然后：
   * 用 Windows 资源管理器：右键 .zip -> "全部解压缩"；或双击 .zip
@@ -49,8 +49,11 @@
 ----------------------------------------------------------------
 本整合包默认运行内置的确定性合成网络（用于开箱验证）。
 要跑真实的 YuE2-3B-OrbitQuant-W4A4 模型：
-  1) 从 Hugging Face 下载模型（约 3 GB + VAE 0.53 GB）：
-     hf-mirror.com/WaveCut/YuE2-3B-OrbitQuant-W4A4
+  1) 从 ModelScope 下载模型（约 3 GB，含 manifest/量化权重/tokenizer）：
+     网页: https://www.modelscope.cn/models/syxppp/YuE2-3B-OrbitQuant-W4A4
+     命令行: modelscope download --model syxppp/YuE2-3B-OrbitQuant-W4A4 --local_dir D:\models\YuE2-W4A4
+     （整合包内已带 y4w，可用: 4-CHECK-Env.bat 同目录执行
+       "%PY%\python.exe" -m y4w download-model --local-dir D:\models\YuE2-W4A4）
   2) 把权重放到一个文件夹，例如  D:\models\YuE2-W4A4\
   3) 在 bat 命令末尾加上：--model-dir "D:\models\YuE2-W4A4"
      例如编辑 1-START-WebUI.bat 最后一行为：
@@ -60,7 +63,7 @@
 ----------------------------------------------------------------
   * Python 3.11 (x64, 内置于 python\)
   * PyTorch 2.15.0 + CUDA 13.2 (cu132 wheel，含 CUDA 运行库)
-  * y4w 0.2.1 + [serve] 依赖 (fastapi / uvicorn / httpx / gradio)
+  * y4w 0.2.2 + [serve] 依赖 (fastapi / uvicorn / httpx / gradio)
   * 内置零依赖 abc2midi：ABC 乐谱按声部拆成歌声/伴奏两个 MIDI
   * 无需系统安装 Python，无需 pip install，解压即用
   * CUDA 加速需要 NVIDIA 驱动支持 CUDA 13.2（建议 580+ 驱动）；
@@ -69,7 +72,7 @@
 
 六、目录结构
 ----------------------------------------------------------------
-  Y4W-Portable-CUDA132-v0.2.1\
+  Y4W-Portable-CUDA132-v0.2.2\
     python\                    内置 Python 运行时 + 所有依赖
     1-START-WebUI.bat          一键服务
     2-RUN-CLI.bat              一键 CLI

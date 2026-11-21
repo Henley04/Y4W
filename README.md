@@ -7,7 +7,9 @@
 `y4w` 是面向 **Windows** 的 YuE2 / OrbitQuant W4A4 推理引擎。它实现了与
 [`WaveCut/YuE2-3B-OrbitQuant-W4A4`](https://huggingface.co/WaveCut/YuE2-3B-OrbitQuant-W4A4)
 一致的 4-bit 打包权重格式（Lloyd-Max codebook、per-row bfloat16 scale、RPBH 旋转），
-并提供统一的多后端执行层。
+并提供统一的多后端执行层。模型的 **ModelScope 镜像**在
+[`syxppp/YuE2-3B-OrbitQuant-W4A4`](https://www.modelscope.cn/models/syxppp/YuE2-3B-OrbitQuant-W4A4)，
+下载与推理均走 ModelScope（不依赖 HuggingFace）。
 
 ## 三种使用方式（任选其一）
 
@@ -29,6 +31,9 @@ pip install -e .
 
 # 一键服务所需依赖（Gradio WebUI + REST API）
 pip install -e .[serve]
+
+# 需要从 ModelScope 下载模型时（可选，含 modelscope SDK）
+pip install -e .[hub]
 
 # 需要 GPU 时，先装匹配显卡的 CUDA 版 PyTorch，例如：
 # pip install torch --index-url https://download.pytorch.org/whl/cu128
@@ -253,11 +258,28 @@ int8 舍入相对误差 <2%，端到端投影相对误差 <5%（见 `y4w/tests/t
 
 ---
 
-## 加载真实 3B 权重
+## 加载真实 3B 权重（ModelScope）
 
-完整权重与独立 VAE 由上游 HuggingFace 分发（约 3 GB + 0.53 GB）。下载后把目录传给
-`--model-dir` / `EngineConfig(model_dir=...)`，引擎读取 `orbitquant_manifest.json`，
-按名称把量化投影装入 `W4A4Linear` 并分发到所选后端。
+权重托管在 ModelScope 镜像 [`syxppp/YuE2-3B-OrbitQuant-W4A4`](https://www.modelscope.cn/models/syxppp/YuE2-3B-OrbitQuant-W4A4)（约 3 GB，含 `orbitquant_manifest.json`、量化 `model.safetensors` 与 tokenizer）。用内置命令一键下载：
+
+```powershell
+pip install -e .[hub]
+y4w download-model --local-dir D:\models\YuE2-W4A4
+# CLI / serve 用 --model-dir 指向该目录即可：
+y4w generate --model-dir D:\models\YuE2-W4A4 --prompt "..."
+```
+
+也可用 Python API：
+
+```python
+from y4w.hub import download_model
+path = download_model(local_dir=r"D:\models\YuE2-W4A4")  # 返回快照目录
+```
+
+或直接用 ModelScope CLI：`modelscope download --model syxppp/YuE2-3B-OrbitQuant-W4A4 --local_dir D:\models\YuE2-W4A4`。
+模型 ID 可用环境变量 `Y4W_MODEL_ID` 覆盖。`download-model` 默认只拉取引擎所需的运行时文件；如需完整源码/内核树，去掉该限制即可。
+
+引擎读取目录里的 `orbitquant_manifest.json`，按名称把量化投影装入 `W4A4Linear` 并分发到所选后端。
 
 > 未加载真实权重时运行的是内置确定性合成 MoT 网络，仅用于 CI 与冒烟测试，
 > 不代表音乐质量。

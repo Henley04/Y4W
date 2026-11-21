@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "y4w"
-version = "0.2.1"
+version = "0.2.2"
 description = "Windows-native YuE2 OrbitQuant W4A4 inference engine with CUDA / TensorRT-RTX / Vulkan backends"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,11 +28,11 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0", "httpx>=0.24", "fastapi>=0.100"]
-hub = ["huggingface-hub>=0.20", "soundfile>=0.12"]
+hub = ["modelscope>=1.20", "soundfile>=0.12"]
 # One-command service: REST API (fastapi/uvicorn) + Gradio WebUI.
 # The API works even if gradio is omitted; the WebUI is optional on top.
 serve = ["fastapi>=0.100", "uvicorn>=0.20", "httpx>=0.24", "gradio>=4.0"]
-all = ["pytest>=7.0", "httpx>=0.24", "huggingface-hub>=0.20",
+all = ["pytest>=7.0", "httpx>=0.24", "modelscope>=1.20",
        "soundfile>=0.12", "fastapi>=0.100", "uvicorn>=0.20", "gradio>=4.0"]
 
 [project.scripts]

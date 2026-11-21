@@ -4,6 +4,6 @@ torch>=2.2
 numpy>=1.24
 safetensors>=0.4
 
-# Optional (inference artifacts / model download)
-# huggingface-hub>=0.20
+# Optional (model download from ModelScope). Install with: pip install -e .[hub]
+# modelscope>=1.20
 # soundfile>=0.12

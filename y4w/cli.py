@@ -102,6 +102,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Directory for vocal.mid / accompaniment.mid (default: .)")
     am.add_argument("--vocal-filename", default="vocal.mid")
     am.add_argument("--accompaniment-filename", default="accompaniment.mid")
+
+    dl = sub.add_parser("download-model", help="Download YuE2 W4A4 weights from ModelScope")
+    dl.add_argument("--model-id", default=None,
+                    help="ModelScope repo id (default: syxppp/YuE2-3B-OrbitQuant-W4A4)")
+    dl.add_argument("--local-dir", default=None,
+                    help="Download directly into this directory (use as --model-dir)")
+    dl.add_argument("--cache-dir", default=None,
+                    help="ModelScope cache directory (default: ~/.cache/modelscope)")
     return parser
 
 
@@ -232,6 +240,29 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 2
+        return 0
+
+    if args.command == "download-model":
+        from .hub import download_model, get_model_id, model_url
+        rid = args.model_id or get_model_id()
+        print(f"[y4w] 从 ModelScope 下载模型: {rid}")
+        print(f"[y4w] 页面: {model_url(rid)}")
+        try:
+            path = download_model(
+                model_id=rid,
+                cache_dir=args.cache_dir,
+                local_dir=args.local_dir,
+            )
+        except RuntimeError as exc:
+            print(f"[y4w] 下载失败: {exc}", file=sys.stderr)
+            return 2
+        except Exception as exc:  # network / auth / disk errors
+            print(f"[y4w] 下载失败: {type(exc).__name__}: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps({"ok": True, "model_id": rid, "path": path},
+                         indent=2, ensure_ascii=False))
+        print(f"[y4w] 下载完成: {path}")
+        print("[y4w] 推理时用 --model-dir 指向该目录即可")
         return 0
 
     parser.print_help()
